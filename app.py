@@ -2,6 +2,7 @@ import streamlit as st
 from datetime import datetime
 import io
 import uuid
+import csv
 
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -29,7 +30,6 @@ st.markdown("""
         min-height: 48px; font-size: 1rem;
     }
     h1 { font-size: 1.8rem !important; text-align: center; }
-    /* 모바일: 자동 확대 방지 + 터치 영역 확보 */
     @media (max-width: 640px) {
         .stTextArea textarea  { font-size: 16px !important; }
         .stTextInput input    { font-size: 16px !important; }
@@ -88,6 +88,23 @@ def save_diary(title, content, mood, weather, date_str):
         return False, str(e)
 
 
+def update_diary(doc_id, title, content, mood, weather, date_str):
+    if not db:
+        return False, "Firebase 연결 실패"
+    try:
+        db.collection("diaries").document(doc_id).update({
+            "title":      title,
+            "content":    content,
+            "mood":       mood,
+            "weather":    weather,
+            "date":       date_str,
+            "updated_at": datetime.now().isoformat(),
+        })
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
 def load_diaries():
     if not db:
         return []
@@ -109,7 +126,7 @@ def delete_diary(doc_id):
 # ── STT ───────────────────────────────────────────────────────────────────────
 def transcribe_audio(audio_file):
     if not PYDUB_AVAILABLE:
-        return None, "pydub가 설치되지 않았습니다. `pip install pydub` 실행 후 ffmpeg도 설치해주세요."
+        return None, "pydub가 설치되지 않았습니다."
     try:
         audio_bytes = audio_file.read()
         segment = AudioSegment.from_file(io.BytesIO(audio_bytes))
@@ -129,23 +146,29 @@ def transcribe_audio(audio_file):
         return None, f"변환 오류: {e}"
 
 
+# ── 내보내기 ──────────────────────────────────────────────────────────────────
+def export_csv(diaries):
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["날짜", "제목", "기분", "날씨", "내용", "작성시각"])
+    for d in diaries:
+        writer.writerow([
+            d.get("date", ""),
+            d.get("title", ""),
+            d.get("mood", ""),
+            d.get("weather", ""),
+            d.get("content", "").replace("\n", " "),
+            d.get("created_at", "")[:16],
+        ])
+    return buf.getvalue().encode("utf-8-sig")
+
+
 # ── 앱 UI ─────────────────────────────────────────────────────────────────────
 st.title("💭 현제 생각")
 
-# Firebase 미설정 안내
 if not db:
     st.error("Firebase 설정이 필요합니다.")
     st.markdown("`.streamlit/secrets.toml` 파일을 열어 Firebase 정보를 입력해주세요.")
-    with st.expander("secrets.toml 예시 보기"):
-        st.code("""
-[firebase]
-type = "service_account"
-project_id = "your-project-id"
-private_key_id = "your-key-id"
-private_key = "-----BEGIN RSA PRIVATE KEY-----\\n...\\n-----END RSA PRIVATE KEY-----\\n"
-client_email = "firebase-adminsdk-xxx@your-project.iam.gserviceaccount.com"
-client_id = "your-client-id"
-        """, language="toml")
     st.stop()
 
 
@@ -173,13 +196,15 @@ WEATHERS = {
     "❄️ 눈":    "snowy",
     "🌫️ 흐림":  "foggy",
 }
+MOOD_KEYS    = list(MOODS.keys())
+WEATHER_KEYS = list(WEATHERS.keys())
 MOOD_EMOJI    = {v: k.split()[0] for k, v in MOODS.items()}
 WEATHER_EMOJI = {v: k.split()[0] for k, v in WEATHERS.items()}
 
 tab_write, tab_list = st.tabs(["✏️ 새 생각", "📚 목록 보기"])
 
 
-# ── 새 일기 ──────────────────────────────────────────────────────────────────
+# ── 새 생각 ──────────────────────────────────────────────────────────────────
 with tab_write:
     if "content_area" not in st.session_state:
         st.session_state.content_area = ""
@@ -188,17 +213,15 @@ with tab_write:
 
     col_mood, col_weather = st.columns(2)
     with col_mood:
-        selected_mood = st.selectbox("기분", list(MOODS.keys()))
+        selected_mood = st.selectbox("기분", MOOD_KEYS)
     with col_weather:
-        selected_weather = st.selectbox("날씨", list(WEATHERS.keys()))
+        selected_weather = st.selectbox("날씨", WEATHER_KEYS)
 
     title = st.text_input("제목", placeholder="오늘 하루를 한 줄로 표현해보세요...")
 
-    # 음성 입력
     with st.expander("🎤 음성", expanded=False):
         if not PYDUB_AVAILABLE:
-            st.warning("음성 입력을 사용하려면 `pip install pydub` 후 ffmpeg를 설치해주세요.\n\n"
-                       "Windows: `winget install ffmpeg`")
+            st.warning("음성 입력을 사용하려면 `pip install pydub` 후 ffmpeg를 설치해주세요.\n\nWindows: `winget install ffmpeg`")
         else:
             audio_input = st.audio_input("녹음 버튼을 눌러 말하세요")
             if audio_input:
@@ -214,7 +237,7 @@ with tab_write:
                         st.error(err)
 
     st.text_area(
-        "일기 내용",
+        "내용",
         placeholder="오늘 어떤 일이 있었나요? 생각이나 느낌을 자유롭게 적어보세요.",
         height=300,
         key="content_area",
@@ -237,7 +260,7 @@ with tab_write:
                     selected_date.isoformat(),
                 )
                 if ok:
-                    st.success("일기가 저장되었습니다! 📖")
+                    st.success("저장되었습니다! 📖")
                     del st.session_state["content_area"]
                     st.rerun()
                 else:
@@ -255,7 +278,10 @@ with tab_list:
     if not diaries:
         st.info("📝 아직 작성된 생각이 없어요. 첫 번째 생각을 써보세요!")
     else:
-        # 연도/월 목록 추출
+        # 검색
+        search = st.text_input("🔍 검색", placeholder="제목 또는 내용으로 검색...", label_visibility="collapsed")
+
+        # 연도/월 필터
         years = sorted({d.get("date", "")[:4] for d in diaries if d.get("date")}, reverse=True)
         col_y, col_m = st.columns(2)
         with col_y:
@@ -270,16 +296,71 @@ with tab_list:
         if sel_month != "전체":
             m = sel_month[:2]
             filtered = [d for d in filtered if d.get("date", "")[5:7] == m]
+        if search.strip():
+            kw = search.strip().lower()
+            filtered = [d for d in filtered if kw in d.get("title", "").lower() or kw in d.get("content", "").lower()]
 
-        st.markdown(f"총 **{len(filtered)}**개")
+        col_cnt, col_exp = st.columns([2, 1])
+        with col_cnt:
+            st.markdown(f"총 **{len(filtered)}**개")
+        with col_exp:
+            csv_bytes = export_csv(filtered)
+            st.download_button(
+                "📥 CSV 내보내기",
+                data=csv_bytes,
+                file_name=f"생각_{datetime.today().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+
+        if "editing_id" not in st.session_state:
+            st.session_state.editing_id = None
+
         for diary in filtered:
-            date_str    = diary.get("date", "")[:10]
-            title_d     = diary.get("title", "제목 없음")
-            mood_d      = MOOD_EMOJI.get(diary.get("mood", ""), "")
-            weather_d   = WEATHER_EMOJI.get(diary.get("weather", ""), "")
+            doc_id    = diary["id"]
+            date_str  = diary.get("date", "")[:10]
+            title_d   = diary.get("title", "제목 없음")
+            mood_d    = MOOD_EMOJI.get(diary.get("mood", ""), "")
+            weather_d = WEATHER_EMOJI.get(diary.get("weather", ""), "")
+
             with st.expander(f"{weather_d} {mood_d} {date_str}  —  {title_d}"):
-                st.write(diary.get("content", ""))
-                st.caption(f"작성: {diary.get('created_at', '')[:16]}")
-                if st.button("삭제", key=f"del_{diary['id']}", type="secondary"):
-                    delete_diary(diary["id"])
-                    st.rerun()
+                if st.session_state.editing_id == doc_id:
+                    # 수정 폼
+                    mood_val    = next((k for k, v in MOODS.items() if v == diary.get("mood")), MOOD_KEYS[0])
+                    weather_val = next((k for k, v in WEATHERS.items() if v == diary.get("weather")), WEATHER_KEYS[0])
+                    try:
+                        date_val = datetime.fromisoformat(diary.get("date", "")).date()
+                    except Exception:
+                        date_val = datetime.today().date()
+
+                    e_date    = st.date_input("날짜", value=date_val, key=f"e_date_{doc_id}")
+                    e_mood    = st.selectbox("기분", MOOD_KEYS, index=MOOD_KEYS.index(mood_val), key=f"e_mood_{doc_id}")
+                    e_weather = st.selectbox("날씨", WEATHER_KEYS, index=WEATHER_KEYS.index(weather_val), key=f"e_weather_{doc_id}")
+                    e_title   = st.text_input("제목", value=title_d, key=f"e_title_{doc_id}")
+                    e_content = st.text_area("내용", value=diary.get("content", ""), height=200, key=f"e_content_{doc_id}")
+
+                    col_ok, col_cancel = st.columns(2)
+                    with col_ok:
+                        if st.button("✅ 저장", key=f"save_{doc_id}", type="primary", use_container_width=True):
+                            ok, err = update_diary(doc_id, e_title.strip(), e_content.strip(), MOODS[e_mood], WEATHERS[e_weather], e_date.isoformat())
+                            if ok:
+                                st.session_state.editing_id = None
+                                st.rerun()
+                            else:
+                                st.error(f"수정 실패: {err}")
+                    with col_cancel:
+                        if st.button("✖ 취소", key=f"cancel_{doc_id}", use_container_width=True):
+                            st.session_state.editing_id = None
+                            st.rerun()
+                else:
+                    st.write(diary.get("content", ""))
+                    st.caption(f"작성: {diary.get('created_at', '')[:16]}")
+                    col_edit, col_del = st.columns(2)
+                    with col_edit:
+                        if st.button("✏️ 수정", key=f"edit_{doc_id}", use_container_width=True):
+                            st.session_state.editing_id = doc_id
+                            st.rerun()
+                    with col_del:
+                        if st.button("🗑️ 삭제", key=f"del_{doc_id}", type="secondary", use_container_width=True):
+                            delete_diary(doc_id)
+                            st.rerun()
