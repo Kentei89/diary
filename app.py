@@ -15,20 +15,29 @@ except ImportError:
 
 
 st.set_page_config(
-    page_title="나의 일기",
-    page_icon="📔",
+    page_title="현제 생각",
+    page_icon="💭",
     layout="centered",
     initial_sidebar_state="collapsed",
 )
 
 st.markdown("""
 <style>
-    .block-container { padding-top: 1rem; padding-bottom: 2rem; max-width: 700px; }
-    .stButton > button { border-radius: 12px; font-weight: 600; }
+    .block-container { padding-top: 1rem; padding-bottom: 4rem; max-width: 700px; }
+    .stButton > button {
+        border-radius: 12px; font-weight: 600;
+        min-height: 48px; font-size: 1rem;
+    }
     h1 { font-size: 1.8rem !important; text-align: center; }
+    /* 모바일: 자동 확대 방지 + 터치 영역 확보 */
     @media (max-width: 640px) {
-        .stTextArea textarea { font-size: 16px !important; }
-        .stTextInput input  { font-size: 16px !important; }
+        .stTextArea textarea  { font-size: 16px !important; }
+        .stTextInput input    { font-size: 16px !important; }
+        .stSelectbox select   { font-size: 16px !important; }
+        div[data-baseweb="select"] * { font-size: 16px !important; }
+        .stDateInput input    { font-size: 16px !important; }
+        .stTabs [data-baseweb="tab"] { font-size: 1rem; padding: 10px 16px; }
+        .block-container { padding-left: 1rem; padding-right: 1rem; }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -121,7 +130,7 @@ def transcribe_audio(audio_file):
 
 
 # ── 앱 UI ─────────────────────────────────────────────────────────────────────
-st.title("📔 나의 일기")
+st.title("💭 현제 생각")
 
 # Firebase 미설정 안내
 if not db:
@@ -167,7 +176,7 @@ WEATHERS = {
 MOOD_EMOJI    = {v: k.split()[0] for k, v in MOODS.items()}
 WEATHER_EMOJI = {v: k.split()[0] for k, v in WEATHERS.items()}
 
-tab_write, tab_list = st.tabs(["✏️ 새 일기", "📚 목록 보기"])
+tab_write, tab_list = st.tabs(["✏️ 새 생각", "📚 목록 보기"])
 
 
 # ── 새 일기 ──────────────────────────────────────────────────────────────────
@@ -229,13 +238,13 @@ with tab_write:
                 )
                 if ok:
                     st.success("일기가 저장되었습니다! 📖")
-                    st.session_state.content_area = ""
+                    del st.session_state["content_area"]
                     st.rerun()
                 else:
                     st.error(f"저장 실패: {err}")
     with col_clear:
         if st.button("🗑️ 지우기", use_container_width=True):
-            st.session_state.content_area = ""
+            del st.session_state["content_area"]
             st.rerun()
 
 
@@ -244,10 +253,26 @@ with tab_list:
     diaries = load_diaries()
 
     if not diaries:
-        st.info("📝 아직 작성된 일기가 없어요. 첫 번째 일기를 써보세요!")
+        st.info("📝 아직 작성된 생각이 없어요. 첫 번째 생각을 써보세요!")
     else:
-        st.markdown(f"총 **{len(diaries)}**개의 일기")
-        for diary in diaries:
+        # 연도/월 목록 추출
+        years = sorted({d.get("date", "")[:4] for d in diaries if d.get("date")}, reverse=True)
+        col_y, col_m = st.columns(2)
+        with col_y:
+            sel_year = st.selectbox("연도", ["전체"] + years, key="filter_year")
+        with col_m:
+            month_options = ["전체"] + [f"{m:02d}월" for m in range(1, 13)]
+            sel_month = st.selectbox("월", month_options, key="filter_month")
+
+        filtered = diaries
+        if sel_year != "전체":
+            filtered = [d for d in filtered if d.get("date", "").startswith(sel_year)]
+        if sel_month != "전체":
+            m = sel_month[:2]
+            filtered = [d for d in filtered if d.get("date", "")[5:7] == m]
+
+        st.markdown(f"총 **{len(filtered)}**개")
+        for diary in filtered:
             date_str    = diary.get("date", "")[:10]
             title_d     = diary.get("title", "제목 없음")
             mood_d      = MOOD_EMOJI.get(diary.get("mood", ""), "")
