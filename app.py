@@ -2,7 +2,9 @@ import streamlit as st
 from datetime import datetime
 import io
 import uuid
-import csv
+from docx import Document
+from docx.shared import Pt, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -147,20 +149,54 @@ def transcribe_audio(audio_file):
 
 
 # ── 내보내기 ──────────────────────────────────────────────────────────────────
-def export_csv(diaries):
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(["날짜", "제목", "기분", "날씨", "내용", "작성시각"])
+def export_docx(diaries, mood_emoji, weather_emoji):
+    doc = Document()
+
+    # 제목
+    title_para = doc.add_heading("💭 현제 생각", level=0)
+    title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
     for d in diaries:
-        writer.writerow([
-            d.get("date", ""),
-            d.get("title", ""),
-            d.get("mood", ""),
-            d.get("weather", ""),
-            d.get("content", "").replace("\n", " "),
-            d.get("created_at", "")[:16],
-        ])
-    return buf.getvalue().encode("utf-8-sig")
+        date_raw  = d.get("date", "")[:10]
+        try:
+            dt = datetime.fromisoformat(date_raw)
+            date_kor = f"{dt.year}년 {dt.month:02d}월 {dt.day:02d}일"
+        except Exception:
+            date_kor = date_raw
+
+        mood_e    = mood_emoji.get(d.get("mood", ""), "")
+        weather_e = weather_emoji.get(d.get("weather", ""), "")
+        mood_label    = next((k for k, v in MOODS.items() if v == d.get("mood")), "")
+        weather_label = next((k for k, v in WEATHERS.items() if v == d.get("weather")), "")
+
+        doc.add_paragraph("─" * 40)
+
+        # 날짜·날씨·기분 헤더
+        header = doc.add_paragraph()
+        run = header.add_run(f"{date_kor}  {weather_e} {weather_label}  {mood_e} {mood_label}")
+        run.bold = True
+        run.font.size = Pt(11)
+        run.font.color.rgb = RGBColor(0x44, 0x44, 0x88)
+
+        # 제목
+        entry_title = doc.add_paragraph()
+        t_run = entry_title.add_run(d.get("title", ""))
+        t_run.bold = True
+        t_run.font.size = Pt(13)
+
+        # 내용
+        doc.add_paragraph(d.get("content", ""))
+
+        # 작성 시각
+        created = d.get("updated_at") or d.get("created_at", "")
+        caption = doc.add_paragraph(f"작성: {created[:16]}")
+        caption.runs[0].font.size = Pt(9)
+        caption.runs[0].font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
 
 
 # ── 앱 UI ─────────────────────────────────────────────────────────────────────
@@ -304,12 +340,12 @@ with tab_list:
         with col_cnt:
             st.markdown(f"총 **{len(filtered)}**개")
         with col_exp:
-            csv_bytes = export_csv(filtered)
+            docx_bytes = export_docx(filtered, MOOD_EMOJI, WEATHER_EMOJI)
             st.download_button(
-                "📥 CSV 내보내기",
-                data=csv_bytes,
-                file_name=f"생각_{datetime.today().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
+                "📥 워드 내보내기",
+                data=docx_bytes,
+                file_name=f"생각_{datetime.today().strftime('%Y%m%d')}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 use_container_width=True,
             )
 
