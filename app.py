@@ -1,10 +1,15 @@
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import io
 import uuid
 from docx import Document
 from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+KST = timezone(timedelta(hours=9))
+
+def now_kst():
+    return datetime.now(KST)
 
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -83,7 +88,7 @@ def save_diary(title, content, mood, weather, date_str):
             "mood":       mood,
             "weather":    weather,
             "date":       date_str,
-            "created_at": datetime.now().isoformat(),
+            "created_at": now_kst().isoformat(),
         })
         return True, None
     except Exception as e:
@@ -100,7 +105,7 @@ def update_diary(doc_id, title, content, mood, weather, date_str):
             "mood":       mood,
             "weather":    weather,
             "date":       date_str,
-            "updated_at": datetime.now().isoformat(),
+            "updated_at": now_kst().isoformat(),
         })
         return True, None
     except Exception as e:
@@ -245,7 +250,7 @@ with tab_write:
     if "content_area" not in st.session_state:
         st.session_state.content_area = ""
 
-    selected_date = st.date_input("날짜", value=datetime.today())
+    selected_date = st.date_input("날짜", value=now_kst())
 
     col_mood, col_weather = st.columns(2)
     with col_mood:
@@ -344,7 +349,7 @@ with tab_list:
             st.download_button(
                 "📥 워드 내보내기",
                 data=docx_bytes,
-                file_name=f"생각_{datetime.today().strftime('%Y%m%d')}.docx",
+                file_name=f"생각_{now_kst().strftime('%Y%m%d')}.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 use_container_width=True,
             )
@@ -367,7 +372,7 @@ with tab_list:
                     try:
                         date_val = datetime.fromisoformat(diary.get("date", "")).date()
                     except Exception:
-                        date_val = datetime.today().date()
+                        date_val = now_kst().date()
 
                     e_date    = st.date_input("날짜", value=date_val, key=f"e_date_{doc_id}")
                     e_mood    = st.selectbox("기분", MOOD_KEYS, index=MOOD_KEYS.index(mood_val), key=f"e_mood_{doc_id}")
